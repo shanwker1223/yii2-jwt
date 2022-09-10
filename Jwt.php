@@ -1,19 +1,21 @@
 <?php
 
-namespace sizeg\jwt;
+namespace shanwker1223\jwt;
 
 use Lcobucci\JWT\Builder;
-use Lcobucci\JWT\Claim\Factory as ClaimFactory;
+use Lcobucci\JWT\Configuration;
+use Lcobucci\JWT\Decoder;
+use Lcobucci\JWT\Encoder;
 use Lcobucci\JWT\Parser;
-use Lcobucci\JWT\Parsing\Decoder;
-use Lcobucci\JWT\Parsing\Encoder;
 use Lcobucci\JWT\Signer;
+use Lcobucci\JWT\Signer\Hmac\Sha256;
+use Lcobucci\JWT\Signer\Hmac\Sha384;
+use Lcobucci\JWT\Signer\Hmac\Sha512;
 use Lcobucci\JWT\Signer\Key;
 use Lcobucci\JWT\Token;
-use Lcobucci\JWT\ValidationData;
+use RuntimeException;
 use Yii;
 use yii\base\Component;
-use yii\base\InvalidArgumentException;
 
 /**
  * JSON Web Token implementation, based on this library:
@@ -24,107 +26,79 @@ use yii\base\InvalidArgumentException;
  */
 class Jwt extends Component
 {
+    public ?Signer $signingAlgorithm = null;
+    public Key $signingKey;
+    public ?Key $verificationKey = null;
+    public ?Encoder $encoder = null;
+    public ?Decoder $decoder = null;
 
-    /**
-     * @var array Supported algorithms
-     */
-    public $supportedAlgs = [
-        'HS256' => \Lcobucci\JWT\Signer\Hmac\Sha256::class,
-        'HS384' => \Lcobucci\JWT\Signer\Hmac\Sha384::class,
-        'HS512' => \Lcobucci\JWT\Signer\Hmac\Sha512::class,
-        'ES256' => \Lcobucci\JWT\Signer\Ecdsa\Sha256::class,
-        'ES384' => \Lcobucci\JWT\Signer\Ecdsa\Sha384::class,
-        'ES512' => \Lcobucci\JWT\Signer\Ecdsa\Sha512::class,
-        'RS256' => \Lcobucci\JWT\Signer\Rsa\Sha256::class,
-        'RS384' => \Lcobucci\JWT\Signer\Rsa\Sha384::class,
-        'RS512' => \Lcobucci\JWT\Signer\Rsa\Sha512::class,
+    protected bool $isAsymmetric = false;
+    protected ?Configuration $configuration = null;
+    protected const _SUPPORTED_ALGORITHMS = [
+        'HS256' => Sha256::class,
+        'HS384' => Sha384::class,
+        'HS512' => Sha512::class,
+        'ES256' => Signer\Ecdsa\Sha256::class,
+        'ES384' => Signer\Ecdsa\Sha384::class,
+        'ES512' => Signer\Ecdsa\Sha512::class,
+        'RS256' => Signer\Rsa\Sha256::class,
+        'RS384' => Signer\Rsa\Sha384::class,
+        'RS512' => Signer\Rsa\Sha512::class,
     ];
 
-    /**
-     * @var Key|string $key The key
-     */
-    public $key;
-
-    /**
-     * @var string|array|callable \sizeg\jwtJwtValidationData
-     * @see [[Yii::createObject()]]
-     */
-    public $jwtValidationData = JwtValidationData::class;
-
-    /**
-     * @see [[Lcobucci\JWT\Builder::__construct()]]
-     * @param Encoder|null $encoder
-     * @param ClaimFactory|null $claimFactory
-     * @return Builder
-     */
-    public function getBuilder(Encoder $encoder = null, ClaimFactory $claimFactory = null)
+    public function __construct(array $config = [])
     {
-        return new Builder($encoder, $claimFactory);
-    }
+        parent::__construct($config);
 
-    /**
-     * @see [[Lcobucci\JWT\Parser::__construct()]]
-     * @param Decoder|null $decoder
-     * @param ClaimFactory|null $claimFactory
-     * @return Parser
-     */
-    public function getParser(Decoder $decoder = null, ClaimFactory $claimFactory = null)
-    {
-        return new Parser($decoder, $claimFactory);
-    }
-
-    /**
-     * @see [[Lcobucci\JWT\ValidationData::__construct()]]
-     * @return ValidationData
-     */
-    public function getValidationData()
-    {
-        return Yii::createObject($this->jwtValidationData)->getValidationData();
-    }
-
-    /**
-     * @param string $alg
-     * @return Signer
-     */
-    public function getSigner($alg)
-    {
-        $class = $this->supportedAlgs[$alg];
-
-        return new $class();
-    }
-
-    /**
-     * @param strng $content
-     * @param string|null $passphrase
-     * @return Key
-     */
-    public function getKey($content = null, $passphrase = null)
-    {
-        $content = $content ?: $this->key;
-
-        if ($content instanceof Key) {
-            return $content;
+        if ($this->verificationKey !== null) {
+            $this->isAsymmetric = true;
         }
-
-        return new Key($content, $passphrase);
     }
 
-    /**
-     * Parses the JWT and returns a token class
-     * @param string $token JWT
-     * @param bool $validate
-     * @param bool $verify
-     * @return Token|null
-     * @throws \Throwable
-     */
-    public function loadToken($token, $validate = true, $verify = true)
+
+    public function getBuilder(Encoder $encoder = null): Builder
+    {
+        return $this->getConfig()->builder();
+    }
+
+    protected function getConfig(): Configuration
+    {
+        if ($this->configuration === null) {
+            $this->configuration = $this->createConfiguration();
+
+        }
+        return $this->configuration;
+    }
+
+    protected function createConfiguration(): Configuration
+    {
+        if ($this->isAsymmetric()) {
+            return Configuration::forAsymmetricSigner(
+                $this->getSigningAlgorithm(),
+                $this->getSigningKey(),
+                $this->getVerificationKey(),
+                $this->getEncoder(),
+                $this->getDecoder()
+            );
+        }
+        return Configuration::forSymmetricSigner(
+            $this->getSigningAlgorithm(),
+            $this->getSigningKey(),
+            $this->getEncoder(),
+            $this->getDecoder()
+        );
+    }
+
+    public function getParser(): Parser
+    {
+        return $this->getConfig()->parser();
+    }
+
+    public function loadToken(string $token, bool $validate = true, bool $verify = true): ?Token
     {
         try {
-            $token = $this->getParser()->parse((string) $token);
-        } catch (\RuntimeException $e) {
-            Yii::warning('Invalid JWT provided: ' . $e->getMessage(), 'jwt');
-            return null;
-        } catch (\InvalidArgumentException $e) {
+            $token = $this->getParser()->parse($token);
+        } catch (RuntimeException|\InvalidArgumentException $e) {
             Yii::warning('Invalid JWT provided: ' . $e->getMessage(), 'jwt');
             return null;
         }
@@ -133,45 +107,59 @@ class Jwt extends Component
             return null;
         }
 
-        if ($verify && !$this->verifyToken($token)) {
-            return null;
-        }
-
         return $token;
     }
 
-    /**
-     * Validate token
-     * @param Token $token token object
-     * @param int|null $currentTime
-     * @return bool
-     */
-    public function validateToken(Token $token, $currentTime = null)
+    public function validateToken(Token $token): bool
     {
-        $validationData = $this->getValidationData();
-        if ($currentTime !== null) {
-            $validationData->setCurrentTime($currentTime);
-        }
-        return $token->validate($validationData);
+        return $this->getConfig()->validator()->validate($token);
     }
 
     /**
-     * Validate token
-     * @param Token $token token object
-     * @return bool
-     * @throws \Throwable
+     * @return Signer
      */
-    public function verifyToken(Token $token)
+    public function getSigningAlgorithm(): Signer
     {
-        $alg = $token->getHeader('alg');
+        return $this->signingAlgorithm ?? new Sha256();
+    }
 
-        if (empty($this->supportedAlgs[$alg])) {
-            throw new InvalidArgumentException('Algorithm not supported');
-        }
+    /**
+     * @return Key
+     */
+    public function getSigningKey(): Key
+    {
+        return $this->signingKey;
+    }
 
-        /** @var Signer $signer */
-        $signer = Yii::createObject($this->supportedAlgs[$alg]);
+    /**
+     * @return Key|null
+     */
+    public function getVerificationKey(): ?Key
+    {
+        return $this->verificationKey;
+    }
 
-        return $token->verify($signer, $this->key);
+    /**
+     * @return Encoder|null
+     */
+    public function getEncoder(): ?Encoder
+    {
+        return $this->encoder;
+    }
+
+    /**
+     * @return Decoder|null
+     */
+    public function getDecoder(): ?Decoder
+    {
+        return $this->decoder;
+    }
+
+    /**
+     * @return bool
+     */
+    public function isAsymmetric(): bool
+    {
+        return $this->isAsymmetric;
     }
 }
