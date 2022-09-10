@@ -2,11 +2,11 @@
     "name": "shanwker1223/yii2-jwt",
     "description": "JWT based on Icobucci",
 	"type": "yii2-extension",
-	"keywords": ["yii2", "yii 2", "jwt"],,
+	"keywords": ["yii2", "yii 2", "jwt"],
         {
             "name": "Gabriel Lucas",
             "email": "gabriellucasdev@gmail.com"
-        }
+        },
 	"authors": [
         {
             "name": "Dmitriy Demin",
